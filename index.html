@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>AR Wig Try-On</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a14;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 3 / 4;
+            background: #111;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            display: block;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            pointer-events: none;
+        }
+        #overlay-ui {
+            position: absolute;
+            bottom: 30px;
+            left: 0;
+            right: 0;
+            padding: 0 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #overlay-ui > * {
+            pointer-events: auto;
+        }
+        .btn-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .btn {
+            background: #ff6b8a;
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 40px;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 20px rgba(255,107,138,0.3);
+            flex: 1;
+            min-width: 100px;
+            touch-action: manipulation;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-outline {
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            border: 2px solid #ff6b8a;
+            color: white;
+            box-shadow: none;
+        }
+        .btn-sm {
+            padding: 8px 16px;
+            font-size: 13px;
+            flex: 0.5;
+            min-width: 70px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(15px);
+            padding: 12px 16px;
+            border-radius: 50px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .controls label {
+            color: #ccc;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .controls input[type="range"] {
+            width: 80px;
+            accent-color: #ff6b8a;
+            background: transparent;
+        }
+        #status {
+            color: #888;
+            font-size: 14px;
+            text-align: center;
+            padding: 4px 12px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 20px;
+            backdrop-filter: blur(8px);
+        }
+        #uploadBtn {
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(10px);
+            border: 2px dashed rgba(255,255,255,0.3);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: 0.2s;
+            touch-action: manipulation;
+        }
+        #uploadBtn:active { transform: scale(0.95); }
+        .hidden { display: none !important; }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            z-index: 20;
+            text-align: center;
+            background: rgba(0,0,0,0.7);
+            padding: 20px 30px;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+        }
+        .spinner {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top: 3px solid #ff6b8a;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 500px) {
+            .controls label { font-size: 11px; }
+            .controls input[type="range"] { width: 60px; }
+            .btn { font-size: 13px; padding: 10px 16px; min-width: 80px; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <!-- Loading -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>Starting camera...</div>
+    </div>
+
+    <!-- Camera feed -->
+    <video id="video" autoplay playsinline></video>
+
+    <!-- Overlay canvas (mirrored) -->
+    <canvas id="canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="overlay-ui">
+        <div id="status">📸 Camera starting...</div>
+
+        <div class="controls">
+            <label>📏 Size <input type="range" id="size" min="50" max="200" value="120"></label>
+            <label>↕ Y <input type="range" id="posY" min="-100" max="100" value="-10"></label>
+            <label>🔄 Angle <input type="range" id="angle" min="-30" max="30" value="0"></label>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn" id="uploadBtn">👩‍🦰 Upload Wig</button>
+            <button class="btn btn-outline btn-sm" id="captureBtn">📸 Save</button>
+            <button class="btn btn-outline btn-sm" id="flipBtn">🔄 Flip</button>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-outline btn-sm" id="switchCamBtn">📱 Switch Camera</button>
+            <button class="btn btn-outline btn-sm" id="resetBtn">↺ Reset</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ---------- DOM REFS ----------
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const loading = document.getElementById('loading');
+    const status = document.getElementById('status');
+
+    // ---------- STATE ----------
+    let wigImage = null;
+    let stream = null;
+    let facingMode = 'user'; // 'user' = front, 'environment' = back
+    let isFlipped = false;
+    let isRunning = false;
+
+    // Sliders
+    const sizeSlider = document.getElementById('size');
+    const posYSlider = document.getElementById('posY');
+    const angleSlider = document.getElementById('angle');
+
+    // ---------- CANVAS SIZE ----------
+    function resizeCanvas() {
+        const rect = document.getElementById('container').getBoundingClientRect();
+        canvas.width = rect.width * devicePixelRatio;
+        canvas.height = rect.height * devicePixelRatio;
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+        ctx.scale(1, 1);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ---------- CAMERA START ----------
+    async function startCamera(facing = 'user') {
+        try {
+            loading.classList.remove('hidden');
+            status.textContent = '⏳ Requesting camera...';
+
+            const constraints = {
+                video: {
+                    facingMode: facing,
+                    width: { ideal: 640 },
+                    height: { ideal: 800 },
+                    frameRate: { ideal: 30 }
+                },
+                audio: false
+            };
+
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            await video.play();
+
+            loading.classList.add('hidden');
+            status.textContent = '✅ Camera ready! Upload a wig.';
+            isRunning = true;
+            requestAnimationFrame(drawLoop);
+
+        } catch (err) {
+            loading.classList.add('hidden');
+            status.textContent = '❌ Camera error: ' + err.message;
+            console.error('Camera error:', err);
+            
+            // Offer fallback
+            if (err.name === 'NotAllowedError') {
+                status.textContent = '❌ Camera blocked. Allow camera access and refresh.';
+            } else if (err.name === 'NotFoundError') {
+                status.textContent = '❌ No camera found. Connect a camera.';
+            }
+        }
+    }
+
+    // ---------- DRAW LOOP (Main Magic) ----------
+    function drawLoop() {
+        if (!isRunning) return;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw video (mirrored)
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        // Draw wig overlay if loaded
+        if (wigImage) {
+            const size = parseFloat(sizeSlider.value) / 100;
+            const yOffset = parseInt(posYSlider.value);
+            const angle = parseFloat(angleSlider.value) * Math.PI / 180;
+
+            const wigWidth = canvas.width * 0.7 * size;
+            const wigHeight = wigWidth * (wigImage.height / wigImage.width);
+
+            // Position (center top of head)
+            const x = (canvas.width - wigWidth) / 2;
+            const y = (canvas.height * 0.15) + yOffset * 2;
+
+            ctx.save();
+            ctx.translate(x + wigWidth/2, y + wigHeight/2);
+            ctx.rotate(angle);
+
+            // Flip horizontally if toggled
+            if (isFlipped) {
+                ctx.scale(-1, 1);
+            }
+
+            ctx.drawImage(wigImage, -wigWidth/2, -wigHeight/2, wigWidth, wigHeight);
+            ctx.restore();
+
+            status.textContent = '✅ Wig on! Adjust sliders for perfect fit.';
+        } else {
+            status.textContent = '📸 Upload a wig PNG with transparent background.';
+        }
+
+        requestAnimationFrame(drawLoop);
+    }
+
+    // ---------- UPLOAD WIG ----------
+    document.getElementById('uploadBtn').onclick = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                    wigImage = img;
+                    status.textContent = '✅ Wig loaded! Position it with sliders.';
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+        input.click();
+    };
+
+    // ---------- CAPTURE ----------
+    document.getElementById('captureBtn').onclick = () => {
+        if (!wigImage) {
+            alert('Upload a wig first!');
+            return;
+        }
+        const link = document.createElement('a');
+        link.download = 'wig-tryon-' + new Date().toISOString().slice(0,19).replace(/:/g, '-') + '.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        status.textContent = '💾 Saved!';
+        setTimeout(() => { status.textContent = '✅ Ready'; }, 1500);
+    };
+
+    // ---------- FLIP WIG ----------
+    document.getElementById('flipBtn').onclick = () => {
+        isFlipped = !isFlipped;
+        status.textContent = isFlipped ? '🔄 Wig flipped' : '🔄 Wig normal';
+    };
+
+    // ---------- SWITCH CAMERA ----------
+    document.getElementById('switchCamBtn').onclick = async () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+        facingMode = facingMode === 'user' ? 'environment' : 'user';
+        status.textContent = '🔄 Switching camera...';
+        await startCamera(facingMode);
+    };
+
+    // ---------- RESET ----------
+    document.getElementById('resetBtn').onclick = () => {
+        sizeSlider.value = 120;
+        posYSlider.value = -10;
+        angleSlider.value = 0;
+        isFlipped = false;
+        status.textContent = '↺ Reset sliders';
+        setTimeout(() => { status.textContent = '✅ Ready'; }, 1000);
+    };
+
+    // ---------- SLIDERS UPDATE ----------
+    [sizeSlider, posYSlider, angleSlider].forEach(el => {
+        el.addEventListener('input', () => {
+            // Just update status - draw loop handles the rest
+        });
+    });
+
+    // ---------- START ----------
+    startCamera('user');
+
+    // Handle page visibility (pause when tab hidden)
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            isRunning = false;
+        } else {
+            isRunning = true;
+            requestAnimationFrame(drawLoop);
+        }
+    });
+
+    console.log('💇‍♀️ AR Wig Studio loaded!');
+    console.log('📸 Upload a transparent PNG wig.');
+    console.log('🔄 Use sliders to position the wig.');
+</script>
+</body>
+</html>
